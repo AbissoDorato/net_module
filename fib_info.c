@@ -85,7 +85,8 @@ const char *fib_protocol_to_string(int proto){
     case RTPROT_OSPF : return "OSPF";
     case RTPROT_RIP : return "RIP";
     case RTPROT_EIGRP : return "EIGRP";
-    default: return "Unknown";
+    default: printk(KERN_INFO "Unknown protocol: %d\n", proto);
+        return "Unknown";
     }
 }
 
@@ -133,12 +134,42 @@ static void get_feature_dev(netdev_features_t *feat, char *name){
         printk(KERN_INFO "NETIF_F_IPV6_CSUM is not set\n"); 
 }
 
+static void get_feature_dev_hw(netdev_features_t *feat_hw, char *name){
+    // this let you print the MAC address 
+    printk(KERN_INFO "Device hw features of %s\n", name);
+    // here is possible to add more flags that are present in netdev_features.h --> those are just some of them 
+    if (*feat_hw & NETIF_F_HW_CSUM)
+        printk(KERN_INFO "NETIF_F_HW_CSUM is set\n");
+    else
+        printk(KERN_INFO "NETIF_F_HW_CSUM is not set\n");
+    
+    if (*feat_hw & NETIF_F_HW_VLAN_CTAG_TX)
+        printk(KERN_INFO "NETIF_F_HW_VLAN_CTAG_TX is set\n");
+    else
+        printk(KERN_INFO "NETIF_F_HW_VLAN_CTAG_TX is not set\n");
+    
+}
+
+/*
+* Things to check in the device structure:
+*- mac address
+*- features
+*- hw features
+*- possible net operations 
+*- MPLS feature TBD
+*/
+
 static void get_device_struct(struct net_device *dev){
 
     netdev_features_t *feat = &dev->features;
+    netdev_features_t *feat_hw = &dev->hw_features;
     // this let you print the MAC address 
     printk(KERN_INFO "Device address: %pM\n", dev->perm_addr);
+    printk(KERN_INFO "Device dev port: %d\n", dev->dev_port);
+    // device feature
     get_feature_dev(feat,dev->name);
+    get_feature_dev_hw(feat_hw,dev->name);
+    // get_feature_dev_mpls
 
 }
 
@@ -159,10 +190,11 @@ static int __init fib_info_init(void)
         switch (SELECT)
         {
         case 1:
-            /* code */
+            /* info about the route */
             get_device_routes(dev);
             break;
         case 2:
+            /* info about the device struct */
             get_device_struct(dev);
             break;
         
