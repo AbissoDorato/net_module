@@ -166,9 +166,14 @@ static void analyze_routing_table(struct net *net) {
     
     // Try different destination IPs to get different routes
     for (i = 1; i < 255; i++) {
-        fl4.daddr = htonl(0x0A000000 | i); // 10.0.0.x
+        // priority might be intresting metric to check?  0xc0a87a00
+        fl4.daddr = htonl(0xc0a87a00 | i); // 10.0.0.x 
         fl4.flowi4_scope = RT_SCOPE_UNIVERSE;
-        
+        fsleep(1000);
+        if(fl4.fl4_dport){
+            printk("\nTrying to lookup %d destination port\n", fl4.fl4_dport);
+        }
+        // Perform FIB lookup
         if (fib_lookup(net, &fl4, &res, 0) == 0) {
             if (res.fi) {
                 printk(KERN_INFO "\nRoute Entry Found for %pI4:\n", &fl4.daddr);
@@ -177,6 +182,8 @@ static void analyze_routing_table(struct net *net) {
                 printk(KERN_INFO "  Priority: %u\n", res.fi->fib_priority);
                 printk(KERN_INFO "  Scope: %s\n", 
                        scope_to_string(res.fi->fib_scope));
+                printk(KERN_INFO "  Type: %u\n", res.fi->fib_type);
+                printk(KERN_INFO "  Flags: 0x%x\n", res.fi->fib_flags);
                 
                 // Print next hops
                 if (res.fi->fib_nhs > 0) {
