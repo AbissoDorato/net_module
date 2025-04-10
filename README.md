@@ -4,9 +4,7 @@ A linux module to retrive information reguarding the current network state
 
 ## Usage 
 - Compile the module using make
-- Use the two bash scripts to load the module inside the kernel
- `sudo ./fib_load`
-- use dmesg to see the state of the network, output should look like this
+- run the script fib_full to load,unload and print the log using dmesg
 
 
 
