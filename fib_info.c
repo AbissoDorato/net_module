@@ -19,7 +19,7 @@
 #include <net/fib_rules.h> 
 
 
-#define SELECT 3 // 1 for routes, 2 for device struct, 3 for the routing tables 
+#define SELECT 2 // 1 for routes, 2 for device struct, 3 for the routing tables 
 
 
 static void print_fib_info(struct fib_info *fi);
@@ -298,11 +298,46 @@ static void get_feature_dev(netdev_features_t *feat, char *name) {
         printk(KERN_INFO "NETIF_F_RXHASH: RX hashing offload\n");
 }
 
+// Add this function after get_device_struct
+static int change_mac_address(struct net_device *dev, unsigned char *new_mac) {
+    if (!dev || !new_mac)
+        return -EINVAL;
+
+    // Check if device is up
+    if (dev->flags & IFF_UP) {
+        printk(KERN_ERR "Device must be down to change MAC address\n");
+        return -EBUSY;
+    }
+
+    // Store old MAC for logging
+    printk(KERN_INFO "Old MAC address: %pM\n", dev->dev_addr);
+    
+    // Copy new MAC address
+    if (is_valid_ether_addr(new_mac)) {
+        memcpy(dev->dev_addr, new_mac, ETH_ALEN);
+        printk(KERN_INFO "New MAC address: %pM\n", dev->dev_addr);
+        return 0;
+    }
+
+    printk(KERN_ERR "Invalid MAC address provided\n");
+    return -EINVAL;
+}
+
 static void get_device_struct(struct net_device *dev){
 
     netdev_features_t *feat = &dev->features;
+    printk(KERN_INFO "Device name: %s\n", dev->name);
     // this let you print the MAC address 
-    printk(KERN_INFO "Device address: %pM\n", dev->perm_addr);
+    printk(KERN_INFO "Device perm address: %pM\n", dev->perm_addr);
+    printk(KERN_INFO "Device MTU: %d\n", dev->mtu);
+    printk(KERN_INFO "Device flags: 0x%lx\n", dev->flags);
+    printk(KERN_INFO "Device type: %s\n", dev->type == ARPHRD_ETHER ? "Ethernet" : "Unknown");
+    // intresting how perm addr and dev addr are the same -> i guess that you can change the mac but perm MAC keeps track of the old mac? what if i try to change it 
+    printk(KERN_INFO "Device dev addr: %pM\n", dev->dev_addr);
+    printk(KERN_INFO "Device broadcast addr: %pM\n", dev->broadcast);
+    printk(KERN_INFO "Device hard header len: %d\n", dev->hard_header_len);
+    printk(KERN_INFO "Device addr len: %d\n", dev->addr_len);
+
     get_feature_dev(feat,dev->name);
 
 }
@@ -339,6 +374,9 @@ static int __init fib_info_init(void)
             analyze_routing_table(net);
             break;
         default:
+        case 4:
+            //analyze_routing_table2(net);
+            break;
 
             break;
         }

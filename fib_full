@@ -3,3 +3,4 @@
 insmod ./fib_info.ko $*
 sleep 2
 rmmod ./fib_info.ko $*
+dmesg
