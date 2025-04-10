@@ -17,6 +17,9 @@
 #include <net/route.h>
 #include <linux/rtnetlink.h>
 #include <net/fib_rules.h> 
+#include <linux/netfilter.h>
+#include <linux/ip.h>
+#include <net/ip_fib.h>
 
 
 #define SELECT 2 // 1 for routes, 2 for device struct, 3 for the routing tables 
@@ -96,6 +99,7 @@ static int get_device_routes(struct net_device *dev)
     return -ENOENT;
 }
 
+
 const char *fib_protocol_to_string(int proto){
     // this might be intresting in case of the router not so musch for the normal machine 
     switch (proto)
@@ -120,7 +124,7 @@ const char *fib_protocol_to_string(int proto){
 static void print_fib_info(struct fib_info *fi)
 {
     int i;
-    char * proto ;
+    const char * proto ;
     
     if (!fi)
         return;
@@ -155,50 +159,36 @@ static void print_fib_info(struct fib_info *fi)
 static void analyze_routing_table(struct net *net) {
     struct flowi4 fl4;
     struct fib_result res;
+    __be32 daddr;
     int i;
     
-    printk(KERN_INFO "Analyzing Kernel Routing Table\n");
-    printk(KERN_INFO "--------------------------------\n");
+    printk(KERN_INFO "Analyzing routing tables...\n");
 
-    // Initialize flow
+    // Initialize flow structure
     memset(&fl4, 0, sizeof(fl4));
     fl4.flowi4_scope = RT_SCOPE_UNIVERSE;
-    
-    // Try different destination IPs to get different routes
-    for (i = 1; i < 255; i++) {
-        // priority might be intresting metric to check?  0xc0a87a00
-        fl4.daddr = htonl(0xc0a87a00 | i); // 10.0.0.x 
-        fl4.flowi4_scope = RT_SCOPE_UNIVERSE;
-        fsleep(1000);
-        if(fl4.fl4_dport){
-            printk("\nTrying to lookup %d destination port\n", fl4.fl4_dport);
-        }
-        // Perform FIB lookup
+
+    // Try different destination addresses to find routes
+    for (i = 1; i <= 255; i++) {
+        daddr = htonl(0x0A000000 | i);  // 10.0.0.x addresses
+        fl4.daddr = daddr;
+        
         if (fib_lookup(net, &fl4, &res, 0) == 0) {
             if (res.fi) {
-                printk(KERN_INFO "\nRoute Entry Found for %pI4:\n", &fl4.daddr);
-                printk(KERN_INFO "  Protocol: %s\n", 
-                       fib_protocol_to_string(res.fi->fib_protocol));
-                printk(KERN_INFO "  Priority: %u\n", res.fi->fib_priority);
+                printk(KERN_INFO "\nRoute found for %pI4:\n", &daddr);
+                // Only access fields that are definitely available
+                printk(KERN_INFO "  Type: %u\n", res.type);
                 printk(KERN_INFO "  Scope: %s\n", 
-                       scope_to_string(res.fi->fib_scope));
-                printk(KERN_INFO "  Type: %u\n", res.fi->fib_type);
-                printk(KERN_INFO "  Flags: 0x%x\n", res.fi->fib_flags);
+                       scope_to_string(res.scope));
                 
-                // Print next hops
-                if (res.fi->fib_nhs > 0) {
-                    int j;
-                    printk(KERN_INFO "  Next Hops (%d):\n", res.fi->fib_nhs);
-                    for (j = 0; j < res.fi->fib_nhs; j++) {
-                        struct fib_nh *nh = &res.fi->fib_nh[j];
-                        printk(KERN_INFO "    NH%d:\n", j);
-                        printk(KERN_INFO "      Device: %s\n", 
-                               nh->fib_nh_dev ? nh->fib_nh_dev->name : "none");
-                        printk(KERN_INFO "      Gateway: %pI4\n", 
-                               &nh->fib_nh_gw4);
-                        printk(KERN_INFO "      Weight: %d\n", 
-                               nh->fib_nh_weight);
+                if (res.nhc) {
+                    printk(KERN_INFO "  Next Hop Info:\n");
+                    if (res.nhc->nhc_dev) {
+                        printk(KERN_INFO "    Device: %s\n", 
+                               res.nhc->nhc_dev->name);
                     }
+                    printk(KERN_INFO "    Gateway: %pI4\n", 
+                           &res.nhc->nhc_gw.ipv4);
                 }
             }
         }
@@ -206,49 +196,7 @@ static void analyze_routing_table(struct net *net) {
 
     printk(KERN_INFO "\nRouting Table Analysis Complete\n");
 }
- /*
-         Picture
-         -------
-      
-         Semantics of nexthop is very messy by historical reasons.
-         We have to take into account, that:
-         a) gateway can be actually local interface address,
-            so that gatewayed route is direct.
-         b) gateway must be on-link address, possibly
-            described not by an ifaddr, but also by a direct route.
-         c) If both gateway and interface are specified, they should not
-            contradict.
-         d) If we use tunnel routes, gateway could be not on-link.
-      
-         Attempt to reconcile all of these (alas, self-contradictory) conditions
-         results in pretty ugly and hairy code with obscure logic.
-      
-         I choosed to generalized it instead, so that the size
-         of code does not increase practically, but it becomes
-         much more general.
-         Every prefix is assigned a "scope" value: "host" is local address,
-         "link" is direct route,
-         [ ... "site" ... "interior" ... ]
-         and "universe" is true gateway route with global meaning.
-      
-         Every prefix refers to a set of "nexthop"s (gw, oif),
-         where gw must have narrower scope. This recursion stops
-         when gw has LOCAL scope or if "nexthop" is declared ONLINK,
-         which means that gw is forced to be on link.
-      
-         Code is still hairy, but now it is apparently logically
-         consistent and very flexible. F.e. as by-product it allows
-         to co-exists in peace independent exterior and interior
-         routing processes.
-      
-         Normally it looks as following.
-      
-         {universe prefix}  -> (gw, oif) [scope link]
-                                |
-      			  |-> {link prefix} -> (gw, oif) [scope local]
-      			                        |
-      						|-> {local prefix} (terminal node)
-       */
+
 
 static void get_feature_dev(netdev_features_t *feat, char *name) {
     printk(KERN_INFO "Device features of %s\n", name);
@@ -330,9 +278,10 @@ static void get_device_struct(struct net_device *dev){
     // this let you print the MAC address 
     printk(KERN_INFO "Device perm address: %pM\n", dev->perm_addr);
     printk(KERN_INFO "Device MTU: %d\n", dev->mtu);
-    printk(KERN_INFO "Device flags: 0x%lx\n", dev->flags);
+    printk(KERN_INFO "Device flags: 0x%x\n", dev->flags);
     printk(KERN_INFO "Device type: %s\n", dev->type == ARPHRD_ETHER ? "Ethernet" : "Unknown");
     // intresting how perm addr and dev addr are the same -> i guess that you can change the mac but perm MAC keeps track of the old mac? what if i try to change it 
+    // to note that for virtual bridge the mac 
     printk(KERN_INFO "Device dev addr: %pM\n", dev->dev_addr);
     printk(KERN_INFO "Device broadcast addr: %pM\n", dev->broadcast);
     printk(KERN_INFO "Device hard header len: %d\n", dev->hard_header_len);
@@ -354,7 +303,7 @@ static int __init fib_info_init(void)
     rcu_read_lock();
     analyze_routing_table(net);
     rcu_read_unlock();
-    
+ 
     
     // Iterate through all network devices
     rcu_read_lock();
