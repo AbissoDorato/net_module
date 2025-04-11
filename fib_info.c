@@ -10,12 +10,14 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/inetdevice.h>
 #include <linux/types.h>
 #include <linux/netdevice.h>
 #include <linux/inetdevice.h>
 #include <net/ip_fib.h>
 #include <net/route.h>
 #include <linux/rtnetlink.h>
+#include <net/net_namespace.h>
 #include <net/fib_rules.h> 
 #include <linux/netfilter.h>
 #include <linux/ip.h>
@@ -28,6 +30,8 @@
 static void print_fib_info(struct fib_info *fi);
 static int get_device_routes(struct net_device *dev);
 static void print_route_info(struct fib_result *res);
+static void analyze_routing_table(struct net *net);
+static void try_fig_get_table(struct net *net);
 
 const char *scope_to_string(unsigned char scope) {
 
@@ -39,6 +43,27 @@ const char *scope_to_string(unsigned char scope) {
         case RT_SCOPE_HOST: return "Host";
         case RT_SCOPE_NOWHERE: return "Nowhere";
         default: return "Unknown";
+    }
+}
+
+const char *fib_protocol_to_string(int proto){
+    // this might be intresting in case of the router not so musch for the normal machine 
+    switch (proto)
+    {
+    case RTPROT_UNSPEC : return "Not specified";
+    case RTPROT_REDIRECT : return "Redirect";
+    case RTPROT_KERNEL : return "Kernel";
+    case RTPROT_BOOT : return "Boot";
+    case RTPROT_STATIC : return "Static";   
+    case RTPROT_DHCP : return "DHCP";
+    case RTPROT_MROUTED : return "MROUTED";
+    case RTPROT_BABEL : return "BABEL";
+    case RTPROT_BGP : return "BGP";
+    case RTPROT_ISIS : return "ISIS";
+    case RTPROT_OSPF : return "OSPF";
+    case RTPROT_RIP : return "RIP";
+    case RTPROT_EIGRP : return "EIGRP";
+    default: return "Unknown";
     }
 }
 
@@ -99,28 +124,6 @@ static int get_device_routes(struct net_device *dev)
     return -ENOENT;
 }
 
-
-const char *fib_protocol_to_string(int proto){
-    // this might be intresting in case of the router not so musch for the normal machine 
-    switch (proto)
-    {
-    case RTPROT_UNSPEC : return "Not specified";
-    case RTPROT_REDIRECT : return "Redirect";
-    case RTPROT_KERNEL : return "Kernel";
-    case RTPROT_BOOT : return "Boot";
-    case RTPROT_STATIC : return "Static";   
-    case RTPROT_DHCP : return "DHCP";
-    case RTPROT_MROUTED : return "MROUTED";
-    case RTPROT_BABEL : return "BABEL";
-    case RTPROT_BGP : return "BGP";
-    case RTPROT_ISIS : return "ISIS";
-    case RTPROT_OSPF : return "OSPF";
-    case RTPROT_RIP : return "RIP";
-    case RTPROT_EIGRP : return "EIGRP";
-    default: return "Unknown";
-    }
-}
-
 static void print_fib_info(struct fib_info *fi)
 {
     int i;
@@ -153,50 +156,6 @@ static void print_fib_info(struct fib_info *fi)
                &nh->fib_nh_gw4);
     }
 }
-
-// we are not able to get the routing table from the kernel, the only thing that we can do is to do a look up
-// if i insert this address, is it in the routing table? and from that we can get infos
-static void analyze_routing_table(struct net *net) {
-    struct flowi4 fl4;
-    struct fib_result res;
-    __be32 daddr;
-    int i;
-    
-    printk(KERN_INFO "Analyzing routing tables...\n");
-
-    // Initialize flow structure
-    memset(&fl4, 0, sizeof(fl4));
-    fl4.flowi4_scope = RT_SCOPE_UNIVERSE;
-
-    // Try different destination addresses to find routes
-    for (i = 1; i <= 255; i++) {
-        daddr = htonl(0x0A000000 | i);  // 10.0.0.x addresses
-        fl4.daddr = daddr;
-        
-        if (fib_lookup(net, &fl4, &res, 0) == 0) {
-            if (res.fi) {
-                printk(KERN_INFO "\nRoute found for %pI4:\n", &daddr);
-                // Only access fields that are definitely available
-                printk(KERN_INFO "  Type: %u\n", res.type);
-                printk(KERN_INFO "  Scope: %s\n", 
-                       scope_to_string(res.scope));
-                
-                if (res.nhc) {
-                    printk(KERN_INFO "  Next Hop Info:\n");
-                    if (res.nhc->nhc_dev) {
-                        printk(KERN_INFO "    Device: %s\n", 
-                               res.nhc->nhc_dev->name);
-                    }
-                    printk(KERN_INFO "    Gateway: %pI4\n", 
-                           &res.nhc->nhc_gw.ipv4);
-                }
-            }
-        }
-    }
-
-    printk(KERN_INFO "\nRouting Table Analysis Complete\n");
-}
-
 
 static void get_feature_dev(netdev_features_t *feat, char *name) {
     printk(KERN_INFO "Device features of %s\n", name);
@@ -246,31 +205,6 @@ static void get_feature_dev(netdev_features_t *feat, char *name) {
         printk(KERN_INFO "NETIF_F_RXHASH: RX hashing offload\n");
 }
 
-// Add this function after get_device_struct
-static int change_mac_address(struct net_device *dev, unsigned char *new_mac) {
-    if (!dev || !new_mac)
-        return -EINVAL;
-
-    // Check if device is up
-    if (dev->flags & IFF_UP) {
-        printk(KERN_ERR "Device must be down to change MAC address\n");
-        return -EBUSY;
-    }
-
-    // Store old MAC for logging
-    printk(KERN_INFO "Old MAC address: %pM\n", dev->dev_addr);
-    
-    // Copy new MAC address
-    if (is_valid_ether_addr(new_mac)) {
-        memcpy(dev->dev_addr, new_mac, ETH_ALEN);
-        printk(KERN_INFO "New MAC address: %pM\n", dev->dev_addr);
-        return 0;
-    }
-
-    printk(KERN_ERR "Invalid MAC address provided\n");
-    return -EINVAL;
-}
-
 static void get_device_struct(struct net_device *dev){
 
     netdev_features_t *feat = &dev->features;
@@ -288,22 +222,111 @@ static void get_device_struct(struct net_device *dev){
     printk(KERN_INFO "Device addr len: %d\n", dev->addr_len);
 
     get_feature_dev(feat,dev->name);
-
 }
 
+/* 
+ * Alternative implementation to try using fib_get_table 
+ * We'll attempt to use it with appropriate error handling
+ */
+static void try_fig_get_table(struct net *net) {
+    struct fib_table *tb = NULL;
+    
+    printk(KERN_INFO "Attempting to access routing table using fib_get_table\n");
+    
+#ifdef CONFIG_IP_MULTIPLE_TABLES
+/*     // Only try this if multiple tables are supported
+    tb = fib_get_table(net, RT_TABLE_MAIN);
+    if (!tb) {
+        printk(KERN_WARNING "fib_get_table returned NULL for main table\n");
+        return;
+    }
+    
+    printk(KERN_INFO "Successfully retrieved table ID: %u\n", tb->tb_id);
+    // printk(KERN_INFO "Table type: %u\n", tb->tb_type);
+    
+    // Local table is often table ID 255
+    tb = fib_get_table(net, RT_TABLE_LOCAL);
+    if (tb) {
+        printk(KERN_INFO "Local table ID: %u\n", tb->tb_id);
+        //printk(KERN_INFO "Local table type: %u\n", tb->tb_type);
+    }
+    
+    // Default table is often table ID 253
+    tb = fib_get_table(net, RT_TABLE_DEFAULT);
+    if (tb) {
+        printk(KERN_INFO "Default table ID: %u\n", tb->tb_id);
+        //printk(KERN_INFO "Default table type: %u\n", tb->tb_type);
+    } */
+#else
+    printk(KERN_INFO "Multiple routing tables not supported in this kernel\n");
+#endif
+}
+
+// Alternative approach using fib lookup - doesn't directly need fib_get_table
+static void analyze_routing_table(struct net *net) {
+    struct fib_result res;
+    struct flowi4 fl4;
+    __be32 test_ips[] = {
+        // Some common destinations to test routing
+        htonl(0x08080808),  // 8.8.8.8
+        htonl(0x01010101),  // 1.1.1.1
+        htonl(0x7f000001),  // 127.0.0.1
+        htonl(0xC0A80101),  // 192.168.1.1
+        htonl(0xC0A80001)   // 192.168.0.1
+    };
+    int i, ret;
+    
+    printk(KERN_INFO "Analyzing routing table by performing lookups\n");
+    
+    for (i = 0; i < ARRAY_SIZE(test_ips); i++) {
+        memset(&fl4, 0, sizeof(fl4));
+        fl4.daddr = test_ips[i];
+        fl4.flowi4_scope = RT_SCOPE_UNIVERSE;
+        
+        printk(KERN_INFO "Looking up route for %pI4\n", &test_ips[i]);
+        
+        ret = fib_lookup(net, &fl4, &res, 0);
+        if (ret == 0) {
+            printk(KERN_INFO "Found route!\n");
+            if (res.fi) {
+                print_fib_info(res.fi);
+            }
+            print_route_info(&res);
+        } else {
+            printk(KERN_INFO "No route found (error: %d)\n", ret);
+        }
+        
+        printk(KERN_INFO "-----------------------------\n");
+    }
+}
+
+/* 
+ * This function attempts to use netlink to get routing information.
+ * It's a more standard way to access routing tables from both
+ * kernel and user space.
+ */
+static void netlink_route_query(void) {
+    // This is just a placeholder as full netlink implementation
+    // would require significant additional code
+    printk(KERN_INFO "For complete routing table access, netlink is recommended.\n");
+    printk(KERN_INFO "Check documentation for rtnetlink_rcv and rtmsg structures.\n");
+}
 
 static int __init fib_info_init(void)
 {
     struct net_device *dev;
     struct net *net = &init_net;
     
-    printk(KERN_INFO "Loading FIB info module\n");
+    printk(KERN_INFO "Loading enhanced FIB info module\n");
 
-    // first we analyze the routing table
-    rcu_read_lock();
+    // Try fib_get_table with error handling
+    try_fig_get_table(net);
+    
+    // Analyze routing table through lookups (doesn't require fib_get_table)
     analyze_routing_table(net);
-    rcu_read_unlock();
- 
+    
+    // Mention netlink option
+    netlink_route_query();
     
     // Iterate through all network devices
     rcu_read_lock();
@@ -319,35 +342,29 @@ static int __init fib_info_init(void)
             get_device_struct(dev);
             break;
         case 3:
-            // Print routing table information
+            // Already done above, but we can repeat per device if needed
             analyze_routing_table(net);
             break;
         default:
-        case 4:
-            //analyze_routing_table2(net);
-            break;
-
+            printk(KERN_INFO "Using default: checking device routes\n");
+            get_device_routes(dev);
             break;
         }
-        
-        
     }
     rcu_read_unlock();
     
     return 0;
 }
 
-
-void cleanup_fib_info(void)
+static void __exit cleanup_fib_info(void)
 {
-	// should i like clean the netdevice? i don't think so? 
-    printk(KERN_INFO "Aurevoir Shoshana.\n");
+    printk(KERN_INFO "Unloading FIB info module\n");
 }
 
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Alessandro Torrisi");
-MODULE_DESCRIPTION("FIB Information Display Module");
+MODULE_DESCRIPTION("Enhanced FIB Information Display Module");
 
 module_init(fib_info_init);
 module_exit(cleanup_fib_info);
