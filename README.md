@@ -20,4 +20,8 @@ A linux module to retrive information reguarding the current network state
 
   
 ### Future implementations 
-- net tracker ? (net_namespace.h)
+- add new metrics
+  - operetional state
+  - Software integrity
+  - BGP Flowspec
+
