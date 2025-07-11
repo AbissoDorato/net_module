@@ -1,6 +1,6 @@
 #!/bin/sh
 
-insmod ./fib_info.ko $*
+insmod ./measure.ko $*
 sleep 2
-rmmod ./fib_info.ko $*
+rmmod ./measure.ko $*
 dmesg
