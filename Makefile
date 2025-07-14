@@ -1,4 +1,4 @@
-obj-m += fib_info.o
+obj-m += measure.o
 
 
 
